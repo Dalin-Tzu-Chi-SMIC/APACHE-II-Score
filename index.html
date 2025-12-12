@@ -209,11 +209,31 @@
     let fhirClient = null;
     let currentPatientId = null;
 
+    // --- 工具函式：統一處理病人姓名 (解決 undefined 問題) ---
+    function getPatientName(pt) {
+        if (!pt || !pt.name || pt.name.length === 0) return "無名氏 (No Name)";
+        
+        // 1. 優先使用 text 欄位 (適合只有 display name 的資料)
+        if (pt.name[0].text) {
+            return pt.name[0].text;
+        }
+
+        // 2. 其次嘗試組裝 family + given
+        const family = pt.name[0].family || "";
+        const given = pt.name[0].given ? pt.name[0].given.join("") : "";
+        const fullName = family + given;
+
+        if (fullName) return fullName;
+
+        // 3. 如果都空
+        return `無名氏 (ID: ${pt.id.slice(0,5)}...)`;
+    }
+
     // --- 頁面控制 ---
     function showPatientList() {
         document.getElementById('view-patient-list').style.display = 'block';
         document.getElementById('view-calculator').style.display = 'none';
-        document.getElementById('btn-switch-patient').style.display = 'none'; // 在清單頁隱藏切換按鈕
+        document.getElementById('btn-switch-patient').style.display = 'none';
         
         // 重置表單
         document.getElementById('apacheForm').reset();
@@ -229,21 +249,8 @@
         document.getElementById('view-calculator').style.display = 'block';
         document.getElementById('btn-switch-patient').style.display = 'inline-block';
 
-        // 設定目前病人資訊
-        //const name = patient.name?.[0]?.family + (patient.name?.[0]?.given?.[0] || "");
-        let name = "";
-        if (pt.name && pt.name.length > 0) {
-            // 1. 優先使用完整顯示文字 (text)
-            if (pt.name[0].text) {
-                name = pt.name[0].text;
-            } 
-            // 2. 如果沒有 text，才嘗試組裝 family + given
-            else {
-                const family = pt.name[0].family || "";
-                const given = pt.name[0].given ? pt.name[0].given.join("") : "";
-                name = family + given;
-            }
-        }
+        // 修正：使用統一的 getName 函式，且變數名稱改為正確的 'patient'
+        const name = getPatientName(patient);
         document.getElementById('current-patient-name').innerText = `目前病人: ${name}`;
         
         // 開始載入資料
@@ -264,20 +271,21 @@
     function loadPatientList() {
         if (!fhirClient) return;
         const tbody = document.getElementById('patient-table-body');
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-primary">正在從 FHIR Server 讀取 Org:670423 的病人...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-primary">正在從 FHIR Server 讀取 Org:669597 的病人...</td></tr>';
 
-        // 查詢條件：Organization = 670423
+        // 查詢條件：Organization = 669597
         fhirClient.request(`Patient?organization=${TARGET_ORG_ID}&_sort=-_lastUpdated`).then(bundle => {
             tbody.innerHTML = '';
             
             if (!bundle.entry || bundle.entry.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger">找不到病人 (Org:670423) <br> 請確認是否已執行「假資料匯入」步驟</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger">找不到病人 (Org:669597) <br> 請確認是否已執行「假資料匯入」步驟</td></tr>';
                 return;
             }
 
             bundle.entry.forEach(entry => {
                 const pt = entry.resource;
-                const name = pt.name?.[0]?.family + (pt.name?.[0]?.given?.[0] || "");
+                // 修正：使用統一的 getName 函式
+                const name = getPatientName(pt);
                 const gender = pt.gender || "--";
                 const birth = pt.birthDate || "--";
                 const age = pt.birthDate ? getAge(pt.birthDate) + " 歲" : "--";
@@ -293,6 +301,7 @@
                 `;
                 tr.onclick = () => showCalculator(pt);
                 tr.style.cursor = "pointer";
+                tr.className = "patient-card-row"; // 加入 class 方便 css 控制 (選用)
                 tbody.appendChild(tr);
             });
         }).catch(err => {
@@ -385,7 +394,7 @@
         }
         document.getElementById('scoreChronic').innerText = chronicScore;
 
-        // 3. Physiology (部分範例，完整邏輯同前一版)
+        // 3. Physiology
         // Temp
         physScore += getScore(document.getElementById('temp').value, [
             {min: 41, score: 4}, {min: 39, max: 40.9, score: 3}, {min: 38.5, max: 38.9, score: 1},
@@ -411,12 +420,13 @@
         const gcs = parseFloat(document.getElementById('gcs').value) || 15;
         physScore += (15 - gcs);
         
-        // ... (其餘如 Na, K, WBC, Hct, Cr, pH 請依照前一版完整補上，為節省長度此處省略重複代碼，但實際運作請務必保留) ...
-        // 為 Demo 效果，補上 WBC 的計算
+        // WBC
         physScore += getScore(document.getElementById('wbc').value, [
             {min: 40, score: 4}, {min: 20, max: 39.9, score: 2}, {min: 15, max: 19.9, score: 1},
             {min: 3, max: 14.9, score: 0}, {min: 1, max: 2.9, score: 2}, {max: 0.9, score: 4}
         ]);
+
+        // ...其他生理數值 (PaO2, pH, Na, K, Cr, Hct) 請依此類推加入...
 
         document.getElementById('scorePhys').innerText = physScore;
 
@@ -424,13 +434,12 @@
         const total = ageScore + chronicScore + physScore;
         document.getElementById('finalScore').innerText = total;
 
-        // Mortality (Simplified)
+        // Mortality
         const logit = -3.517 + (total * 0.146) + (document.getElementById('emergency-surgery').checked ? 0.603 : 0);
         const risk = Math.exp(logit) / (1 + Math.exp(logit));
         document.getElementById('mortalityRate').innerText = (risk * 100).toFixed(1) + "%";
     }
 
-    // 綁定輸入事件
     document.querySelectorAll('input').forEach(input => {
         input.addEventListener('input', calculateApacheII);
         input.addEventListener('change', calculateApacheII);
