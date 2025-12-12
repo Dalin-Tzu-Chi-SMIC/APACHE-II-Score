@@ -230,7 +230,20 @@
         document.getElementById('btn-switch-patient').style.display = 'inline-block';
 
         // 設定目前病人資訊
-        const name = patient.name?.[0]?.family + (patient.name?.[0]?.given?.[0] || "");
+        //const name = patient.name?.[0]?.family + (patient.name?.[0]?.given?.[0] || "");
+        let name = "";
+        if (pt.name && pt.name.length > 0) {
+            // 1. 優先使用完整顯示文字 (text)
+            if (pt.name[0].text) {
+                name = pt.name[0].text;
+            } 
+            // 2. 如果沒有 text，才嘗試組裝 family + given
+            else {
+                const family = pt.name[0].family || "";
+                const given = pt.name[0].given ? pt.name[0].given.join("") : "";
+                name = family + given;
+            }
+        }
         document.getElementById('current-patient-name').innerText = `目前病人: ${name}`;
         
         // 開始載入資料
